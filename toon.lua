@@ -588,10 +588,21 @@ local function get_indent_depth(line, indent_size)
     return math.floor(#spaces / indent_size)
 end
 
+-- Validate indentation in strict mode
+local function validate_indent(line, indent_size)
+    local spaces = line:match("^( *)")
+    local space_count = #spaces
+    if space_count % indent_size ~= 0 then
+        error("Invalid indentation: " .. space_count .. " spaces (not a multiple of " .. indent_size .. ")")
+    end
+end
+
 -- Main decode function
 function toon.decode(text, options)
     options = options or {}
     local indent_size = options.indent or DEFAULT_INDENT
+    local strict = options.strict
+    if strict == nil then strict = true end  -- Default to true per spec
     
     if text == "" or text == nil then
         return {}
@@ -600,6 +611,10 @@ function toon.decode(text, options)
     local lines = {}
     for line in text:gmatch("[^\n]*") do
         if line ~= "" then
+            -- Strict mode: validate indentation
+            if strict then
+                validate_indent(line, indent_size)
+            end
             table.insert(lines, line)
         end
     end
@@ -621,6 +636,10 @@ function toon.decode(text, options)
                 local result = {}
                 for _, part in ipairs(parts) do
                     table.insert(result, parse_value(part))
+                end
+                -- Strict mode: validate count
+                if strict and #result ~= header.count then
+                    error("Array count mismatch: declared [" .. header.count .. "] but found " .. #result .. " values")
                 end
                 return result
             else
@@ -646,6 +665,10 @@ function toon.decode(text, options)
             for _, part in ipairs(parts) do
                 table.insert(result, parse_value(part))
             end
+            -- Strict mode: validate count
+            if strict and #result ~= header.count then
+                error("Array count mismatch: declared [" .. header.count .. "] but found " .. #result .. " values")
+            end
             return result
         elseif #header.fields > 0 then
             -- Tabular array
@@ -653,11 +676,19 @@ function toon.decode(text, options)
             for i = 2, #lines do
                 local line = lines[i]
                 local parts = split_by_delimiter(line:match("^%s*(.*)$"), header.delimiter)
+                -- Strict mode: validate field count
+                if strict and #parts ~= #header.fields then
+                    error("Tabular row " .. (i-1) .. " has " .. #parts .. " values but header declares " .. #header.fields .. " fields")
+                end
                 local obj = {}
                 for j, field in ipairs(header.fields) do
                     obj[field] = parse_value(parts[j] or "")
                 end
                 table.insert(result, obj)
+            end
+            -- Strict mode: validate row count
+            if strict and #result ~= header.count then
+                error("Tabular array count mismatch: declared [" .. header.count .. "] but found " .. #result .. " rows")
             end
             return result
         else
@@ -675,11 +706,19 @@ function toon.decode(text, options)
                         for _, part in ipairs(parts) do
                             table.insert(arr, parse_value(part))
                         end
+                        -- Strict mode: validate nested array count
+                        if strict and #arr ~= item_header.count then
+                            error("Nested array count mismatch: declared [" .. item_header.count .. "] but found " .. #arr .. " values")
+                        end
                         table.insert(result, arr)
                     else
                         table.insert(result, parse_value(item_str))
                     end
                 end
+            end
+            -- Strict mode: validate list item count
+            if strict and #result ~= header.count then
+                error("List array count mismatch: declared [" .. header.count .. "] but found " .. #result .. " items")
             end
             return result
         end
