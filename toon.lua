@@ -11,6 +11,19 @@ local DEFAULT_DELIMITER = ","
 local NUMERIC_PATTERN = "^%-?%d+%.?%d*[eE]?[%+%-]?%d*$"
 local LEADING_ZERO_PATTERN = "^0%d+$"
 
+-- Helper: Format delimiter symbol for headers
+local function format_delimiter_symbol(delimiter)
+    if delimiter == "," then
+        return ""  -- Comma is default, omit from header
+    elseif delimiter == "\t" then
+        return "\t"  -- Tab (HTAB)
+    elseif delimiter == "|" then
+        return "|"  -- Pipe
+    else
+        return ""  -- Unknown, default to comma
+    end
+end
+
 -- Helper: Check if value is an array (sequential table)
 local function is_array(t)
     if type(t) ~= "table" then return false end
@@ -202,16 +215,19 @@ local function encode_value(value, depth, delimiter, indent_size)
                 table.insert(parts, encode_primitive(v, delimiter))
             end
             if #value == 0 then
-                return "[0]:"
+                local delim_sym = format_delimiter_symbol(delimiter)
+                return "[0" .. delim_sym .. "]:"
             end
-            return "[" .. #value .. "]: " .. table.concat(parts, delimiter)
+            local delim_sym = format_delimiter_symbol(delimiter)
+            return "[" .. #value .. delim_sym .. "]: " .. table.concat(parts, delimiter)
         end
         
         -- Check if it's a tabular array
         local is_tab, keys = is_tabular_array(value)
         if is_tab then
             -- Tabular format
-            local header = "[" .. #value .. "]{" .. table.concat(keys, delimiter) .. "}:"
+            local delim_sym = format_delimiter_symbol(delimiter)
+            local header = "[" .. #value .. delim_sym .. "]{" .. table.concat(keys, delimiter) .. "}:"
             table.insert(lines, header)
             
             for _, obj in ipairs(value) do
@@ -226,7 +242,8 @@ local function encode_value(value, depth, delimiter, indent_size)
         end
         
         -- Mixed/list array
-        local header = "[" .. #value .. "]:"
+        local delim_sym = format_delimiter_symbol(delimiter)
+        local header = "[" .. #value .. delim_sym .. "]:"
         table.insert(lines, header)
         
         for _, item in ipairs(value) do
@@ -238,7 +255,8 @@ local function encode_value(value, depth, delimiter, indent_size)
                     for _, v in ipairs(item) do
                         table.insert(parts, encode_primitive(v, delimiter))
                     end
-                    table.insert(lines, string.rep(" ", indent_size) .. "- [" .. #item .. "]: " .. table.concat(parts, delimiter))
+                    local item_delim_sym = format_delimiter_symbol(delimiter)
+                    table.insert(lines, string.rep(" ", indent_size) .. "- [" .. #item .. item_delim_sym .. "]: " .. table.concat(parts, delimiter))
                 else
                     -- Nested complex array
                     table.insert(lines, string.rep(" ", indent_size) .. "- " .. encode_value(item, depth + 1, delimiter, indent_size))
@@ -435,12 +453,26 @@ end
 -- Parse header
 local function parse_header(line)
     -- Match: [key][N<delim?>]{fields}:
-    local key, count_str, fields_str = line:match("^(.-)%[(%d+)%](.*)$")
+    -- Need to extract delimiter from inside brackets
+    local key, bracket_content, fields_str = line:match("^(.-)%[([^%]]+)%](.*)$")
     
+    if not bracket_content then return nil end
+    
+    -- Parse bracket content for count and delimiter
+    local count_str = bracket_content:match("^(%d+)")
     if not count_str then return nil end
     
     local count = tonumber(count_str)
-    local delimiter = ","
+    local delimiter = ","  -- Default
+    
+    -- Check for delimiter after the number
+    local delim_char = bracket_content:sub(#count_str + 1, #count_str + 1)
+    if delim_char == "\t" then
+        delimiter = "\t"
+    elseif delim_char == "|" then
+        delimiter = "|"
+    end
+    
     local fields = {}
     
     -- Check for delimiter in header
