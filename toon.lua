@@ -263,38 +263,101 @@ local function encode_value(value, depth, delimiter, indent_size)
                 end
             else
                 -- Object as list item
-                local obj_lines = {}
-                local first = true
+                -- Per §10: When first field is a tabular array, special handling
+                -- Find if any field is a tabular array (spec says "first field in encounter order")
+                -- Since Lua doesn't preserve key order in tables, we'll check all fields
+                -- and use the first tabular array we find
+                local tabular_field = nil
+                local tabular_value = nil
+                local tabular_keys = nil
+                local other_keys = {}
+                
                 for k, v in pairs(item) do
-                    local key_str = quote_key_if_needed(k)
-                    local value_part = encode_value(v, depth + 2, delimiter, indent_size)
-                    
-                    if first then
-                        table.insert(obj_lines, string.rep(" ", indent_size) .. "- " .. key_str .. ": " .. value_part)
-                        first = false
-                    else
-                        if type(v) == "table" and not is_array(v) and next(v) ~= nil then
-                            table.insert(obj_lines, string.rep(" ", (depth + 1) * indent_size) .. key_str .. ":")
-                            local sub_lines = {}
-                            for sk, sv in pairs(v) do
-                                local sub_key = quote_key_if_needed(sk)
-                                local sub_val = encode_value(sv, depth + 2, delimiter, indent_size)
-                                table.insert(sub_lines, string.rep(" ", (depth + 2) * indent_size) .. sub_key .. ": " .. sub_val)
-                            end
-                            table.insert(obj_lines, table.concat(sub_lines, "\n"))
-                        elseif type(v) == "table" and is_array(v) then
-                            local arr_encoded = encode_value(v, depth + 2, delimiter, indent_size)
-                            if arr_encoded:match("\n") then
-                                table.insert(obj_lines, string.rep(" ", (depth + 1) * indent_size) .. key_str .. ": " .. arr_encoded)
-                            else
-                                table.insert(obj_lines, string.rep(" ", (depth + 1) * indent_size) .. key_str .. ": " .. arr_encoded)
-                            end
+                    if not tabular_field and type(v) == "table" and is_array(v) then
+                        local is_tab, tab_keys = is_tabular_array(v)
+                        if is_tab then
+                            tabular_field = k
+                            tabular_value = v
+                            tabular_keys = tab_keys
                         else
-                            table.insert(obj_lines, string.rep(" ", (depth + 1) * indent_size) .. key_str .. ": " .. value_part)
+                            table.insert(other_keys, k)
                         end
+                    else
+                        table.insert(other_keys, k)
                     end
                 end
-                table.insert(lines, table.concat(obj_lines, "\n"))
+                
+                if tabular_field then
+                    -- Emit: - key[N<delim>]{fields}:
+                    local delim_sym = format_delimiter_symbol(delimiter)
+                    local field_str = quote_key_if_needed(tabular_field)
+                    local tab_header = "- " .. field_str .. "[" .. #tabular_value .. delim_sym .. "]{" .. table.concat(tabular_keys, delimiter) .. "}:"
+                    table.insert(lines, string.rep(" ", indent_size) .. tab_header)
+                    
+                    -- Rows at depth +2 from list item base (4 spaces if indent=2)
+                    for _, row_obj in ipairs(tabular_value) do
+                        local row_parts = {}
+                        for _, key in ipairs(tabular_keys) do
+                            table.insert(row_parts, encode_primitive(row_obj[key], delimiter))
+                        end
+                        table.insert(lines, string.rep(" ", 2 * indent_size) .. table.concat(row_parts, delimiter))
+                    end
+                    
+                    -- Other fields at depth +1 from list item base (2 spaces if indent=2)
+                    for _, k in ipairs(other_keys) do
+                        local v = item[k]
+                        local key_str = quote_key_if_needed(k)
+                        
+                        if type(v) ~= "table" then
+                            table.insert(lines, string.rep(" ", indent_size) .. key_str .. ": " .. encode_primitive(v, delimiter))
+                        else
+                            -- Handle nested structures
+                            local encoded = encode_value(v, depth + 2, delimiter, indent_size)
+                            if encoded:match("\n") then
+                                table.insert(lines, string.rep(" ", indent_size) .. key_str .. ":")
+                                for sub_line in encoded:gmatch("[^\n]+") do
+                                    table.insert(lines, string.rep(" ", indent_size) .. sub_line)
+                                end
+                            else
+                                table.insert(lines, string.rep(" ", indent_size) .. key_str .. ": " .. encoded)
+                            end
+                        end
+                    end
+                else
+                    -- Regular object-as-list-item encoding
+                    local obj_lines = {}
+                    local first = true
+                    for k, v in pairs(item) do
+                        local key_str = quote_key_if_needed(k)
+                        local value_part = encode_value(v, depth + 2, delimiter, indent_size)
+                        
+                        if first then
+                            table.insert(obj_lines, string.rep(" ", indent_size) .. "- " .. key_str .. ": " .. value_part)
+                            first = false
+                        else
+                            if type(v) == "table" and not is_array(v) and next(v) ~= nil then
+                                table.insert(obj_lines, string.rep(" ", (depth + 1) * indent_size) .. key_str .. ":")
+                                local sub_lines = {}
+                                for sk, sv in pairs(v) do
+                                    local sub_key = quote_key_if_needed(sk)
+                                    local sub_val = encode_value(sv, depth + 2, delimiter, indent_size)
+                                    table.insert(sub_lines, string.rep(" ", (depth + 2) * indent_size) .. sub_key .. ": " .. sub_val)
+                                end
+                                table.insert(obj_lines, table.concat(sub_lines, "\n"))
+                            elseif type(v) == "table" and is_array(v) then
+                                local arr_encoded = encode_value(v, depth + 2, delimiter, indent_size)
+                                if arr_encoded:match("\n") then
+                                    table.insert(obj_lines, string.rep(" ", (depth + 1) * indent_size) .. key_str .. ": " .. arr_encoded)
+                                else
+                                    table.insert(obj_lines, string.rep(" ", (depth + 1) * indent_size) .. key_str .. ": " .. arr_encoded)
+                                end
+                            else
+                                table.insert(obj_lines, string.rep(" ", (depth + 1) * indent_size) .. key_str .. ": " .. value_part)
+                            end
+                        end
+                    end
+                    table.insert(lines, table.concat(obj_lines, "\n"))
+                end
             end
         end
         
