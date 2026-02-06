@@ -7,6 +7,10 @@ local toon = {}
 local DEFAULT_INDENT = 2
 local DEFAULT_DELIMITER = ","
 
+-- Pattern constants
+local NUMERIC_PATTERN = "^%-?%d+%.?%d*[eE]?[%+%-]?%d*$"
+local LEADING_ZERO_PATTERN = "^0%d+$"
+
 -- Helper: Check if value is an array (sequential table)
 local function is_array(t)
     if type(t) ~= "table" then return false end
@@ -25,8 +29,8 @@ local function needs_quoting(str, delimiter)
     if str == "" then return true end
     if str:match("^%s") or str:match("%s$") then return true end
     if str == "true" or str == "false" or str == "null" then return true end
-    if str:match("^%-?%d+%.?%d*[eE]?[%+%-]?%d*$") then return true end
-    if str:match("^0%d+$") then return true end
+    if str:match(NUMERIC_PATTERN) then return true end
+    if str:match(LEADING_ZERO_PATTERN) then return true end
     if str:match("[:%\"\\%[%]{}]") then return true end
     if str:match("[\n\r\t]") then return true end
     if str:match("^%-") then return true end
@@ -132,6 +136,9 @@ local function is_tabular_array(arr)
         table.insert(keys, k)
     end
     
+    -- Sort keys once for comparison
+    table.sort(keys)
+    
     -- Check all other objects have same keys and primitive values
     for i = 2, #arr do
         local obj = arr[i]
@@ -148,7 +155,6 @@ local function is_tabular_array(arr)
         end
         
         -- Check key sets match
-        table.sort(keys)
         table.sort(obj_keys)
         if #keys ~= #obj_keys then return false end
         for j = 1, #keys do
@@ -356,7 +362,7 @@ local function parse_unquoted_value(str)
     if str == "null" then return nil end
     
     -- Try to parse as number
-    if str:match("^%-?%d+%.?%d*[eE]?[%+%-]?%d*$") and not str:match("^0%d+$") then
+    if str:match(NUMERIC_PATTERN) and not str:match(LEADING_ZERO_PATTERN) then
         return tonumber(str)
     end
     
