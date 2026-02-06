@@ -75,12 +75,29 @@ local function normalize_number(num)
     if num == math.huge or num == -math.huge then return nil end  -- Infinity
     if num == -0 then return 0 end
     
-    -- Format without exponent notation
+    -- Format with enough precision
     local str = string.format("%.17g", num)
+    
+    -- If still in exponent form, try to expand it
+    if str:match("[eE]") then
+        -- Try formatting with more decimal places
+        local expanded = string.format("%.15f", num)
+        -- Remove trailing zeros
+        expanded = expanded:gsub("0+$", ""):gsub("%.$", "")
+        -- Use expanded form if it's reasonable length
+        if #expanded <= 20 then
+            str = expanded
+        end
+    end
     
     -- Remove trailing zeros in decimal part
     if str:match("%.") then
         str = str:gsub("0+$", ""):gsub("%.$", "")
+    end
+    
+    -- If we ended up with just integer, ensure it's an integer
+    if not str:match("%.") then
+        str = tostring(math.floor(tonumber(str)))
     end
     
     return str
